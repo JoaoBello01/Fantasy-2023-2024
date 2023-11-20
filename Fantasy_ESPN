@@ -1,0 +1,87 @@
+library(tidyverse)
+library(rvest)
+library(readxl)
+library(writexl)
+
+
+double_double <- function(link)
+{
+  dados <- read_html(link) %>%
+    html_element("table") %>%
+    html_table() 
+  
+  colnames(dados) <- dados[2, ]
+  
+  dados <- dados[-c(1, 2), ]
+  
+  colnames(dados)[2] <- "Player"
+  
+  
+  dados$Player<- gsub("\\s*\\(.*\\)", "", dados$Player)
+  
+  dados <- dados %>%
+    filter(Player != "Total:" & Player != "Player") %>%
+    select(-c(1, 4, 6:9)) %>%
+    mutate(across(c(2:3), as.numeric))
+  
+  return(dados)
+  
+}
+
+nba_2024 <- function(link)
+{
+
+fantasy <- read_html(link) %>% html_element("table") %>% html_table() %>% 
+  select(-c(29,18)) %>% filter(Player != "Player")  %>% mutate(across(c(1,4, 6:28), as.numeric))
+
+fantasy$Player <- iconv(fantasy$Player, from = 'UTF-8', to = 'ASCII//TRANSLIT')
+
+nomes_errados <- setdiff(dados$Player, fantasy$Player)
+
+nomes_certos <- c("Xavier Tillman Sr.") 
+dados$Player <- ifelse(dados$Player %in% nomes_errados, 
+                       nomes_certos[match(dados$Player, nomes_errados)], 
+                       dados$Player)
+
+fantasy <- full_join(fantasy,dados, by = "Player")
+
+fantasy <- replace(fantasy, is.na(fantasy),0)
+
+fantasy <- fantasy %>% mutate(across(c(11,14,17,20), ~round(.,3)))
+
+return(fantasy)
+
+}
+calcular_pontos <- function(fantasy)
+{
+  fantasy_estatistica <- fantasy %>% filter(MP > 20) %>% group_by(Player) %>% transmute(Pos, Age, Tm, G, GS, MP,
+  FG = FG,
+  FGMI = (FGA - FG) * - 0.5,
+  FTM = FT,
+  FTMI = (FTA - FT) * -1,
+  Three_Pointers_Made = `3P`,
+  Three_Pointers_Missed = (`3PA` - `3P`) * -.5,
+  OREB = ORB * .5,
+  REB = TRB,
+  AST = AST * 1.5,
+  STL = STL * 2.5,
+  BLK = BLK * 2.5,
+  TO = TOV * -1,
+  DD = `Double-Doubles` * 8,
+  TD = `Triple-Doubles` * 15,
+  PTS = PTS)
+  
+  fantasy_estatistica$pontos_total <- rowSums(fantasy_estatistica[, 8:22])
+  fantasy_estatistica$pontos_media <- fantasy_estatistica$pontos_total/fantasy_estatistica$G
+  fantasy_estatistica$pontos_por_minuto <- fantasy_estatistica$pontos_total/ fantasy_estatistica$MP
+  
+  write_xlsx(fantasy_estatistica, "fantasy_estatistica.xlsx")
+  
+  return(fantasy_estatistica)
+}
+
+dados <- double_double("https://www.landofbasketball.com/year_by_year_stats/2023_2024_double_doubles_rs.htm")
+
+fantasy <- nba_2024("https://www.basketball-reference.com/leagues/NBA_2024_totals.html#totals_stats")
+
+fantasy_estatistica <- calcular_pontos(fantasy)
